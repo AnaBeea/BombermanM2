@@ -1,0 +1,455 @@
+#include <iostream>
+#include <conio.h>
+#include <ctime>
+#include <windows.h>
+
+using namespace std;
+
+const int MAP_HEIGHT = 10;
+const int MAP_WIDTH = 20;
+
+const int EMPTY = 0;
+const int STRONG_WALL = 1;
+const int WEAK_WALL = 2;
+const int BOMBERMAN = 3;
+const int ENEMY = 4;
+const int BOMB = 5;
+const int EXPLOSION_AREA = 6;
+
+bool is_place_empty(int pos) {
+    return (pos == 0);
+}
+
+template <typename T>
+bool check_if_contain(const T* array, int size, T value) {
+    for (int i = 0; i < size; ++i) {
+        if (array[i] == value) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+struct Player {
+    int x = 0, y = 0;
+    bool alive = true;
+
+    void show() {
+        cout << char(2);
+    }
+
+    void die() {
+        alive = false;
+    }
+
+    int check_if_move_result_dead(int pos) {
+        if (pos == ENEMY || pos == EXPLOSION_AREA) {
+            return 1;
+        }
+        return 0;
+    }
+
+    void move(char direction, int map[MAP_HEIGHT][MAP_WIDTH]) {
+        int positions[4] = { map[y + 1][x], map[y - 1][x], map[y][x - 1], map[y][x + 1] };
+        switch (direction) {
+        case 's': // Up
+            if (check_if_move_result_dead(positions[0])) {
+                alive = false;
+                return;
+            }
+            if (is_place_empty(positions[0])) {
+                y++;
+            }
+            break;
+        case 'w': // Down
+            if (check_if_move_result_dead(positions[1])) {
+                alive = false;
+                return;
+            }
+            if (is_place_empty(positions[1])) {
+                y--;
+            }
+            break;
+        case 'a': // Left
+            if (check_if_move_result_dead(positions[2])) {
+                alive = false;
+                return;
+            }
+            if (is_place_empty(positions[2])) {
+                x--;
+            }
+            break;
+        case 'd': // Right
+            if (check_if_move_result_dead(positions[3])) {
+                alive = false;
+                return;
+            }
+            if (is_place_empty(positions[3])) {
+                x++;
+            }
+            break;
+        }
+    }
+};
+
+struct Enemy {
+    int x, y;
+    bool alive = true;
+
+    void move(int map[MAP_HEIGHT][MAP_WIDTH]) {
+        int possibleMoves[4] = { 1, 2, 3, 4 }; // 1: Up, 2: Down, 3: Left, 4: Right
+        int numMoves = 4;
+
+        // Check and remove invalid moves from possible moves
+        if (map[y - 1][x] != 0 && map[y - 1][x] != 3) {
+            numMoves--;
+            possibleMoves[0] = 0; // Remove Up
+        }
+        if (map[y + 1][x] != 0 && map[y + 1][x] != 3) {
+            numMoves--;
+            possibleMoves[1] = 0; // Remove Down
+        }
+        if (map[y][x - 1] != 0 && map[y][x - 1] != 3) {
+            numMoves--;
+            possibleMoves[2] = 0; // Remove Left
+        }
+        if (map[y][x + 1] != 0 && map[y][x + 1] != 3) {
+            numMoves--;
+            possibleMoves[3] = 0; // Remove Right
+        }
+
+        // If there are valid moves, choose one randomly and move
+        if (numMoves > 0) {
+            int randomMoveIndex;
+            do {
+                randomMoveIndex = rand() % 4;
+            } while (possibleMoves[randomMoveIndex] == 0);
+
+            switch (possibleMoves[randomMoveIndex]) {
+            case 1: // Up
+                map[y][x] = 0;
+                y--;
+                break;
+            case 2: // Down
+                map[y][x] = 0;
+                y++;
+                break;
+            case 3: // Left
+                map[y][x] = 0;
+                x--;
+                break;
+            case 4: // Right
+                map[y][x] = 0;
+                x++;
+                break;
+            }
+            map[y][x] = 4;
+        }
+    }
+
+    void show() {
+        cout << char(206); // Enemy representation
+    }
+
+    void die() {
+        alive = false;
+    }
+};
+
+struct Bomb {
+    bool is_placed = false;
+    bool is_animating = false;
+    int x, y;
+    clock_t start, end;
+    int explode_cd_time = 3;
+    int enemies;
+
+    void setup(int px, int py, int map[MAP_HEIGHT][MAP_WIDTH]) {
+        x = px;
+        y = py;
+        bomb_set_active();
+        map[y][x] = 5;
+    }
+
+    void bomb_set_active() {
+        start = clock();
+        is_placed = true;
+    }
+
+    void modify_map(int map[MAP_HEIGHT][MAP_WIDTH], int num) {
+        int positions[4] = { map[y - 1][x], map[y + 1][x], map[y][x - 1], map[y][x + 1] };
+        for (int i = 0; i < 4; i++) {
+            if (is_place_empty(positions[i]) || positions[i] == 6) {
+                if (i == 0) map[y - 1][x] = num;
+                else if (i == 1) map[y + 1][x] = num;
+                else if (i == 2) map[y][x - 1] = num;
+                else map[y][x + 1] = num;
+            }
+        }
+        map[y][x] = num;
+    }
+
+    void bomb_animate(int map[MAP_HEIGHT][MAP_WIDTH]) {
+        end = clock();
+        if ((end - start) / CLOCKS_PER_SEC == 1) {
+            modify_map(map, 0);
+            is_animating = false;
+        }
+    }
+
+    void bomb_check_coll(int map[MAP_HEIGHT][MAP_WIDTH], Player& player, Enemy enemies[], int numEnemies) {
+        int positions[5][2] = { {y, x - 1} ,{y, x + 1}, {y - 1,x}, {y + 1,x}, {y,x} };
+        for (int i = 0; i < 5; i++) {
+            int y = positions[i][0];
+            int x = positions[i][1];
+            if (player.x == x && player.y == y) {
+                player.die();
+                return;
+            }
+            for (int i = 0; i < numEnemies; ++i) {
+                if (enemies[i].x == x && enemies[i].y == y) {
+                    enemies[i].die();
+                }
+            }
+            if (map[y][x] == WEAK_WALL) {
+                map[y][x] = 0;
+            }
+        }
+    }
+
+    void bomb_explode(int map[MAP_HEIGHT][MAP_WIDTH], Player& player, Enemy enemies[], int numEnemies) {
+        bomb_check_coll(map, player, enemies, numEnemies);
+        modify_map(map, 6);
+        is_animating = true;
+    }
+
+    void bomb_explode_controler(int map[MAP_HEIGHT][MAP_WIDTH], Player& player, Enemy enemies[], int numEnemies) {
+        end = clock();
+        if ((end - start) / CLOCKS_PER_SEC == explode_cd_time) {
+            is_placed = false;
+            start = clock();
+            bomb_explode(map, player, enemies, numEnemies);
+        }
+    }
+};
+
+void handle_input(Player& player, int map[MAP_HEIGHT][MAP_WIDTH], Bomb& bomb) {
+    char keyboard_input;
+    if (_kbhit()) {
+        keyboard_input = _getch();
+        if (keyboard_input == 'w' || keyboard_input == 'a' || keyboard_input == 's' || keyboard_input == 'd') {
+            player.move(keyboard_input, map);
+        }
+        else if (keyboard_input == 'b' && bomb.is_placed == false && bomb.is_animating == false) {
+            bomb.setup(player.x, player.y, map);
+        }
+    }
+}
+
+void update_map(int map[MAP_HEIGHT][MAP_WIDTH], Player& player) {
+    for (int y = 0; y < MAP_HEIGHT; y++) {
+        for (int x = 0; x < MAP_WIDTH; x++) {
+            if (map[y][x] == 1) {
+                cout << char(219);
+            }
+            else if (map[y][x] == 2) {
+                cout << char(177);
+            }
+            else if (y == player.y && x == player.x) {
+                player.show();
+            }
+            else if (map[y][x] == 5) {
+                cout << char(190);
+            }
+            else if (map[y][x] == 6) {
+                cout << char(216);
+            }
+            else if (map[y][x] == 4) {
+                cout << char(206);
+            }
+            else {
+                cout << " ";
+            }
+        }
+        cout << "\n";
+    }
+}
+
+void move_enemies(int map[MAP_HEIGHT][MAP_WIDTH], Enemy enemies[], int numEnemies) {
+    for (int i = 0; i < numEnemies; ++i) {
+        enemies[i].move(map);
+    }
+}
+
+bool check_game_over(int map[MAP_HEIGHT][MAP_WIDTH], Player& player) {
+    bool is_end = player.alive;
+    int num_of_enemies = 0;
+    for (int y = 0; y < MAP_HEIGHT; y++) {
+        for (int x = 0; x < MAP_WIDTH; x++) {
+            if (map[y][x] == 4) {
+                num_of_enemies++;
+                if (player.x == x && player.y == y) {
+                    is_end = false;
+                }
+            }
+        }
+    }
+    if (num_of_enemies == 0) {
+        is_end = false;
+    }
+    return is_end;
+}
+
+void parar_cursor_piscar() {
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO cursorInfo;
+    GetConsoleCursorInfo(out, &cursorInfo);
+    cursorInfo.bVisible = false;
+    SetConsoleCursorInfo(out, &cursorInfo);
+}
+
+void reposicionar_cursor_inicio() {
+    short int CX = 0, CY = 0;
+    COORD coord;
+    coord.X = CX;
+    coord.Y = CY;
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+}
+
+void setup_cursor() {
+    parar_cursor_piscar();
+    reposicionar_cursor_inicio();
+}
+void show_menu() {
+    cout << "=== MENU ===" << endl;
+    cout << "1. Novo Jogo" << endl;
+    cout << "2. Continuar" << endl;
+    cout << "3. Carregar" << endl;
+    cout << "4. Salvar" << endl;
+    cout << "5. Sair" << endl;
+    cout << "=============" << endl;
+    cout << "Escolha uma opcao: ";
+}
+int main() {
+    Player player;
+    player.x = 1;
+    player.y = 1;
+    clock_t start, end;
+    Bomb bomb;
+
+    int map[MAP_HEIGHT][MAP_WIDTH] = {
+        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+        {1, 3, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1},
+        {1, 2, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1},
+        {1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 2, 0, 1},
+        {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 2, 1, 1, 1, 0, 2, 0, 1},
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 2, 2, 1, 0, 1},
+        {1, 0, 2, 2, 0, 0, 2, 2, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1},
+        {1, 0, 2, 0, 0, 1, 0, 2, 0, 1, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1},
+        {1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+        {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+    };
+
+    start = clock();
+
+    int num_of_enemies = 3;
+    Enemy enemies[3];
+
+    enemies[0].x = 6;
+    enemies[0].y = 4;
+    enemies[1].x = 8;
+    enemies[1].y = 8;
+    enemies[2].x = 13;
+    enemies[2].y = 2;
+    map[4][6] = ENEMY;
+    map[8][8] = ENEMY;
+    map[2][13] = ENEMY;
+
+
+    bool gameRunning = false;
+    bool inMenu = true;
+    int choice;
+    while (inMenu) {
+        setup_cursor();
+        show_menu();
+        cin >> choice;
+
+        switch (choice) {
+        case 1: // Novo Jogo
+            player.x = 1;
+            player.y = 1;
+            player.alive = true;
+
+            for (int y = 0; y < MAP_HEIGHT; y++) {
+                for (int x = 0; x < MAP_WIDTH; x++) {
+                    // Reinicialize o mapa para seus valores iniciais, por exemplo:
+                    // map[y][x] = (rand() % 2) + 1; // Pode gerar paredes aleatórias, por exemplo
+                }
+            }
+
+            // Reinicialize os inimigos, por exemplo:
+            // enemies[0].x = 6;
+            // enemies[0].y = 4;
+            // enemies[0].alive = true;
+            // ... faça o mesmo para outros inimigos
+
+            // Reinicialize as bombas, por exemplo:
+            // bomb.is_placed = false;
+            // bomb.is_animating = false;
+            // ... faça o mesmo para outras bombas
+
+            // Reinicialize o timer do jogo
+            start = clock();
+
+            gameRunning = true;
+            break;
+        case 2:
+            if (gameRunning) {
+                // Implemente a lógica para continuar o jogo aqui
+            }
+            else {
+                cout << "Nenhum jogo em andamento." << endl;
+            }
+            break;
+        case 3:
+            // Implemente a lógica para carregar um jogo aqui
+            break;
+        case 4:
+            if (gameRunning) {
+                // Implemente a lógica para salvar o jogo aqui
+            }
+            else {
+                cout << "Nenhum jogo em andamento para salvar." << endl;
+            }
+            break;
+        case 5:
+            inMenu = false;
+            break;
+        default:
+            cout << "Opcao invalida. Tente novamente." << endl;
+        }
+    }
+    while (gameRunning) {
+        end = clock();
+        if ((end - start) / CLOCKS_PER_SEC == 3) {
+            move_enemies(map, enemies, 3);
+            start = clock();
+        }
+        if (bomb.is_placed) {
+            bomb.bomb_explode_controler(map, player, enemies, num_of_enemies);
+        }
+        else if (bomb.is_animating) {
+            bomb.bomb_animate(map);
+        }
+        setup_cursor();
+        handle_input(player, map, bomb);
+        update_map(map, player);
+        cout << "X[" << player.x << "] ";
+        cout << "Y[" << player.y << "]";
+        cout << player.alive;
+
+        gameRunning = check_game_over(map, player);
+    }
+
+    return 0;
+}
